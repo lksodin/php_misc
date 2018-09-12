@@ -1,13 +1,15 @@
-<?
-require_once(dirname(__FILE__)."/logger.php");
+<?php
+class CurlWrapperException extends RecoverableException {}
 
-class CurlWrapper{
-  const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/30.0.1599.66 Safari/537.36';
+class CurlWrapper
+{
+  const DEFAULT_USER_AGENT = 'Ruten CurlWrapper';
+  //const COOKIE_TMP_DIR = '/tmp/';
 
   private $_opts = array();
   private $_headers = array();
   private $_curl_handler;
-  private $logger = null;
+  protected $cookie_file = null;
 
   /**
    * 初始化Curl預設設定
@@ -16,7 +18,8 @@ class CurlWrapper{
    * @param  string $url 網址
    * @param  array  $opts 設定s
    */
-  public function __construct(){
+  public function __construct()
+  {
     $this->_init_opts();
   }
 
@@ -26,20 +29,11 @@ class CurlWrapper{
    * @param  void
    * @return void
    */
-  public function __destruct(){
-    curl_close($this->_curl_handler);
-  }
-
-  public function logger(){
-    if($this->logger === null){
-      $this->_init_logger();
+  public function __destruct()
+  {
+    if (!empty($this->_curl_handler)) {
+      curl_close($this->_curl_handler);
     }
-
-    return $this->logger;
-  }
-
-  private function _init_logger(){
-    $this->logger = new Logger('/home/odin/test/log/web_page_fetcher/'. date('Ymd') .'.log');
   }
 
   /**
@@ -48,13 +42,16 @@ class CurlWrapper{
    * @param void
    * @return void
    */
-  private function _init_opts(){
+  private function _init_opts()
+  {
     $this->_opts = array(
       CURLOPT_USERAGENT      => self::DEFAULT_USER_AGENT,
       CURLOPT_RETURNTRANSFER => true,
       CURLOPT_CONNECTTIMEOUT => 20,
       CURLOPT_TIMEOUT        => 20,
-      CURLOPT_ENCODING       => 'gzip,deflate'
+      CURLOPT_ENCODING       => 'gzip,deflate',
+      CURLOPT_AUTOREFERER    => true,
+      CURLOPT_FOLLOWLOCATION => true
     );
 
     self::_setDefaultHeaders();
@@ -67,11 +64,12 @@ class CurlWrapper{
    * @param void
    * @return void
    */
-  private function _setDefaultHeaders(){
+  private function _setDefaultHeaders()
+  {
     $this->_headers = array(
       'Connection'      => 'keep-alive',
-      'Accept'          => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Language' => 'zh-TW,zh;q=0.8,en-US;q=0.6,en;q=0.4'
+      'Accept'          => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language' => 'en-US,en;q=0.5'
     );
   }
 
@@ -82,7 +80,8 @@ class CurlWrapper{
    * @param array $opts curl options
    * @return void
    */
-  public function set_opts_array($opts){
+  public function set_opts_array($opts)
+  {
     foreach($opts as $key => $val){
       $this->set_opts($key, $val);
     }
@@ -95,7 +94,8 @@ class CurlWrapper{
    * @param int $val value to set
    * @return void
    */
-  public function set_opts($key, $val){
+  public function set_opts($key, $val)
+  {
     $this->_opts[$key] = $val;
   }
 
@@ -105,11 +105,15 @@ class CurlWrapper{
    * @param int $key integer or CURLOPT_* const
    * @return bool|int|string 回傳指定參數的值
    */
-  public function get_opts($key){
-    if(isset($this->_opts[$key])){
+  public function get_opts($key = null)
+  {
+    if (empty($key)) {
+      return $this->_opts;
+    } elseif (isset($this->_opts[$key])) {
       return $this->_opts[$key];
-    }else{
-      return null;
+    } else {
+      #Todo: customeize this exception
+      throw new Exception("Unknown opt key :{$key}");
     }
   }
 
@@ -119,7 +123,8 @@ class CurlWrapper{
    * @param string $user_agent User agent string
    * @return void
    */
-  public function set_user_agent($user_agent){
+  public function set_user_agent($user_agent)
+  {
     $this->set_opts(CURLOPT_USERAGENT, $user_agent);
   }
 
@@ -129,7 +134,8 @@ class CurlWrapper{
    * @param int $key integer or CURLOPT_* const
    * @return bool|int|string 回傳指定參數的值
    */
-  public function get_user_agent(){
+  public function get_user_agent()
+  {
     return $this->get_opts(CURLOPT_USERAGENT);
   }
 
@@ -139,7 +145,8 @@ class CurlWrapper{
    * @param string $url
    * @return void
    */
-  public function set_url($url){
+  public function set_url($url)
+  {
     $this->set_opts(CURLOPT_URL, $url);
   }
 
@@ -149,7 +156,8 @@ class CurlWrapper{
    * @param void
    * @return string 目前設定的url
    */
-  public function get_url(){
+  public function get_url()
+  {
     return $this->get_opts(CURLOPT_URL);
   }
 
@@ -159,7 +167,8 @@ class CurlWrapper{
    * @param void
    * @return bool return true if url set, else false
    */
-  private function _is_url_set(){
+  private function _is_url_set()
+  {
     $url = $this->get_url();
     return !empty($url);
   }
@@ -171,21 +180,26 @@ class CurlWrapper{
    * @param array $header
    * @return bool return true if url set, else false
    */
-  public function set_http_headers($headers, $clean_default = false){
+  public function set_http_headers($headers, $clean_default = false)
+  {
     if($clean_default == true){
       $this->_headers = $headers;
     }else{
-      foreach($headers as $key => $val){
-        $this->_headers[$key] = $val;
+      foreach($headers as $header){
+        list($key, $val) = $header;
+        $this->set_header($key, $val);
       }
     }
   }
 
-  public function set_header($key, $val){
+
+  public function set_header($key, $val)
+  {
     $this->_headers[$key] = $val;
   }
 
-  public function verbose_on(){
+  public function verbose_on()
+  {
     $this->set_opts(CURLOPT_VERBOSE, true);
   }
 
@@ -195,28 +209,48 @@ class CurlWrapper{
    * @param void
    * @return void
    */
-  public function verbose_off(){
+  public function verbose_off()
+  {
     $this->set_opts(CURLOPT_VERBOSE, false);
   }
 
   /**
-   * Turn on http header output
+   * Turn on http request header output
    *
    * @param void
    * @return void
    */
-  public function header_ouput_on(){
+  public function request_header_on()
+  {
     $this->set_opts(CURLINFO_HEADER_OUT, true);
   }
 
   /**
-   * Turn off host SSL verify
+   * Turn off request header
    *
    * @param void
    * @return void
    */
-  public function header_ouput_off(){
+  public function request_header_off()
+  {
     $this->set_opts(CURLINFO_HEADER_OUT, false);
+  }
+
+  public function response_header_on()
+  {
+    $this->set_opts(CURLOPT_HEADER, true);
+  }
+
+  /**
+   * Turn off SSL verify
+   *
+   * @param void
+   * @return void
+   */
+  public function ssl_verify_off()
+  {
+    $this->ssl_verify_host_off();
+    $this->ssl_verify_peer_off();
   }
 
   /**
@@ -225,7 +259,8 @@ class CurlWrapper{
    * @param void
    * @return void
    */
-  public function ssl_verify_host_off(){
+  public function ssl_verify_host_off()
+  {
     $this->set_opts(CURLOPT_SSL_VERIFYHOST, false);
   }
 
@@ -235,7 +270,8 @@ class CurlWrapper{
    * @param void
    * @return void
    */
-  public function ssl_verify_peer_off(){
+  public function ssl_verify_peer_off()
+  {
     $this->set_opts(CURLOPT_SSL_VERIFYPEER, false);
   }
 
@@ -245,8 +281,20 @@ class CurlWrapper{
    * @param void
    * @return void
    */
-  public function follow_location_on(){
+  public function follow_location_on()
+  {
     $this->set_opts(CURLOPT_FOLLOWLOCATION, true);
+  }
+
+  /**
+   * Turn off curl follow location (http header redirect)
+   *
+   * @param void
+   * @return void
+   */
+  public function follow_location_off()
+  {
+    $this->set_opts(CURLOPT_FOLLOWLOCATION, false);
   }
 
   /**
@@ -260,7 +308,8 @@ class CurlWrapper{
    * @param int $second timeout seconds
    * @return void
    */
-  public function set_timeouts($second){
+  public function set_timeouts($second)
+  {
     $this->set_opts( CURLOPT_TIMEOUT, $second);
     $this->set_opts( CURLOPT_CONNECTTIMEOUT, $second);
   }
@@ -271,7 +320,8 @@ class CurlWrapper{
    * @param int $second timeout seconds
    * @return void
    */
-  public function set_timeout($second){
+  public function set_timeout($second)
+  {
     $this->set_opts( CURLOPT_TIMEOUT, $second);
   }
 
@@ -281,8 +331,14 @@ class CurlWrapper{
    * @param int $second timeout seconds
    * @return void
    */
-  public function set_connect_timeout($second){
+  public function set_connect_timeout($second)
+  {
     $this->set_opts( CURLOPT_CONNECTTIMEOUT, $second);
+  }
+
+  public function set_referer($refer)
+  {
+    $this->set_opts( CURLOPT_REFERER, $refer );
   }
 
   /**
@@ -293,7 +349,8 @@ class CurlWrapper{
    * @param  array $headers
    * @return array
    */
-  private static function HeaderArrayToString($headers){
+  private static function HeaderArrayToString($headers)
+  {
     $formated_headers = array();
 
     if(is_array($headers) and count($headers) > 0){
@@ -318,20 +375,53 @@ class CurlWrapper{
    * @param string $cookie_path
    * @return void
    */
-  public function enable_cookie($cookie_path = ""){
-    if(empty($cookie_path)){
-      return false;
-    }else{
-      $cookie_path = $this->_get_default_cookie_path();
+  public function enable_cookie()
+  {
+    #already enabled
+    if (!empty($this->cookie_file)) {
+      return true;
     }
 
-    $this->set_receive_cookie_file($cookie_path);
-    $this->set_send_cookie_file($cookie_path);
+    if (empty($this->cookie_file)) {
+      throw new CurlWrapperException("Assign cookie file first.");
+    }
+
+    $this->set_receive_cookie_file($this->cookie_file);
+    $this->set_send_cookie_file($this->cookie_file);
   }
 
-  private function _get_default_cookie_path(){
-    return false;
+  public function disable_cookie()
+  {
+    $this->set_cookie_file(null);
+    $this->set_receive_cookie_file(null);
+    $this->set_send_cookie_file(null);
   }
+
+  public function cleanup_cookie()
+  {
+    if (!empty($this->cookie_file) and is_file($this->cookie_file)) {
+      unlink($this->cookie_file);
+    }
+  }
+
+  protected function set_cookie_file($cookie_file)
+  {
+    if (!is_file($cookie_file)) {
+      throw new CurlWrapperException("The given path is not a valid file path.");
+    }
+
+    $this->cookie_file = $cookie_file;
+  }
+
+  public function get_cookie_file()
+  {
+    return $this->cookie_file;
+  }
+
+  //protected function get_default_cookie_path()
+  //{
+    //return self::COOKIE_TMP_DIR.sprintf('%s_%s.jar', time(), md5(rand(10000,99999)));
+  //}
 
   /**
    * 指定檔案以儲存 response 中 set-cookie 的值
@@ -339,7 +429,8 @@ class CurlWrapper{
    * @param string $path cookie的存放路徑
    * @return void
    */
-  public function set_receive_cookie_file($path){
+  public function set_receive_cookie_file($path)
+  {
     $this->set_opts(CURLOPT_COOKIEJAR, $path);
   }
 
@@ -350,18 +441,20 @@ class CurlWrapper{
    * @param string $path cookie的存放路徑
    * @return void
    */
-  public function set_send_cookie_file($path){
+  public function set_send_cookie_file($path)
+  {
     $this->set_opts(CURLOPT_COOKIEFILE, $path);
   }
 
   /**
    * 取得 request headers
-   * 取得 request headers ，curl_exec前須開啟(header_ouput_on())
+   * 取得 request headers ，curl_exec前須開啟(request_header_on())
    *
    * @param void
    * @return array
    */
-  public function get_request_headers(){
+  public function get_request_headers()
+  {
     return curl_getinfo($this->_curl_handler, CURLINFO_HEADER_OUT);
   }
 
@@ -371,11 +464,13 @@ class CurlWrapper{
    * @param void
    * @return int
    */
-  public function get_http_code(){
+  public function get_http_code()
+  {
     return curl_getinfo($this->_curl_handler, CURLINFO_HTTP_CODE);
   }
 
-  public function get_curl_info(){
+  public function get_curl_info()
+  {
     return curl_getinfo($this->_curl_handler);
   }
 
@@ -385,7 +480,8 @@ class CurlWrapper{
    * @param void
    * @return string return empty string when no error occur, otherwise return error msg from curl_erro
    */
-  public function get_curl_error(){
+  public function get_curl_error()
+  {
     return curl_error($this->_curl_handler);
   }
 
@@ -395,7 +491,8 @@ class CurlWrapper{
    * @param void
    * @return string post/get/etc (put,delete 目前沒有用到，沒有實作)
    */
-  public function get_http_method(){
+  public function get_http_method()
+  {
     if($this->get_opts(CURLOPT_POST) === 1){
       return "POST";
     }elseif($this->get_opts(CURLOPT_HTTPGET) === 1){
@@ -412,7 +509,8 @@ class CurlWrapper{
    * @param array  $params 需要傳遞的參數(還沒實作..)
    * @return mixed 目標網址回傳的資料
    */
-  public function get($url , $params = array()){
+  public function get($url , $params = array())
+  {
     $this->set_url($url);
 
     if(!empty($params)){
@@ -429,6 +527,11 @@ class CurlWrapper{
       $this->set_url($url);
     }
 
+    //$this->set_opts(CURLOPT_CUSTOMREQUEST, null);
+    $this->set_opts(CURLOPT_POST, null);
+    $this->set_opts(CURLOPT_POSTFIELDS, null);
+    unset($this->_opts[CURLOPT_POST]);
+    unset($this->_opts[CURLOPT_POSTFIELDS]);
     $this->set_opts(CURLOPT_HTTPGET, true);
 
     return $this->exec_curl();
@@ -441,22 +544,40 @@ class CurlWrapper{
    * @param array  $params 需要傳遞的參數
    * @return mixed 目標網址回傳的資料
    */
-  public function post($url, $params = array()){
+  public function post($url, $params = array())
+  {
+    if (is_array($params) or is_object($params)) {
+      $post_data = http_build_query($params);
+    } else {
+      $post_data = $params;
+    }
+
+    //$this->set_opts(CURLOPT_CUSTOMREQUEST, null);
+    $this->set_opts(CURLOPT_HTTPGET, null);
+    unset($this->_opts[ CURLOPT_HTTPGET ]);
     $this->set_opts(CURLOPT_POST, true);
-    $this->set_opts(CURLOPT_POSTFIELDS, http_build_query($params));
+    $this->set_opts(CURLOPT_POSTFIELDS, $post_data);
     $this->set_url($url);
 
     return $this->exec_curl();
   }
 
-  public function exec_curl(){
+  public function exec_curl()
+  {
     assert($this->_is_url_set());
-    $this->_curl_handler = curl_init();
     $this->set_opts(CURLOPT_HTTPHEADER, self::HeaderArrayToString($this->_headers));
-    curl_setopt_array($this->_curl_handler, $this->_opts);
-    $result = curl_exec($this->_curl_handler);
+    curl_setopt_array($this->get_curl_handler(), $this->_opts);
+    $result = curl_exec($this->get_curl_handler());
 
     return $result;
   }
+
+  protected function get_curl_handler()
+  {
+    if (empty($this->_curl_handler)) {
+      $this->_curl_handler = curl_init();
+    }
+
+    return $this->_curl_handler;
+  }
 }
-?>
