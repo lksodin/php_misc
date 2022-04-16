@@ -1,9 +1,7 @@
 <?php
-class CurlWrapperException extends RecoverableException {}
-
-class CurlWrapper
+class Curl
 {
-  const DEFAULT_USER_AGENT = 'Ruten CurlWrapper';
+  const DEFAULT_USER_AGENT = 'curl';
   //const COOKIE_TMP_DIR = '/tmp/';
 
   private $_opts = array();
